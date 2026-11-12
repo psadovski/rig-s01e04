@@ -1,4 +1,4 @@
-name: Initial marked digest preview
+name: Reviewed digest preview
 
 on:
   workflow_dispatch:
@@ -27,10 +27,8 @@ jobs:
       - run: pnpm test
       - run: pnpm typecheck
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-      - name: Export initial marked HTML over local HTTP
-        env:
-          LANE_MARKER: ${{ secrets.LANE_MARKER }}
-        run: pnpm exec tsx scripts/export-preview.ts "$RUNNER_TEMP/s01e04-preview"
+      - name: Export unmarked HTML over local HTTP
+        run: env -u LANE_MARKER pnpm exec tsx scripts/export-preview.ts "$RUNNER_TEMP/s01e04-preview" --unmarked
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: ${{ runner.temp }}/s01e04-preview

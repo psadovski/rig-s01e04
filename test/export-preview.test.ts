@@ -27,16 +27,22 @@ async function fixtureHashes(): Promise<string[]> {
     createHash('sha256').update(await readFile(join(root, 'runs', `${night}.jsonl`))).digest('hex')));
 }
 
-function exportCommand(output: string, marker = 'synthetic-preview<&"\'marker') {
-  return run(process.execPath, ['--import', 'tsx', 'scripts/export-preview.ts', output], {
+const syntheticMarker = 'synthetic-preview<&"\'marker';
+
+function exportCommand(output: string, marker: string | undefined, unmarked = false) {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    LANE_ID: 'unrelated-private-lane',
+    PREVIEW_ENV_SENTINEL: 'unrelated-private-environment-value',
+  };
+  delete env.LANE_MARKER;
+  if (marker !== undefined) env.LANE_MARKER = marker;
+  return run(process.execPath, [
+    '--import', 'tsx', 'scripts/export-preview.ts', output, ...(unmarked ? ['--unmarked'] : []),
+  ], {
     cwd: root,
     timeout: 15_000,
-    env: {
-      ...process.env,
-      LANE_MARKER: marker,
-      LANE_ID: 'unrelated-private-lane',
-      PREVIEW_ENV_SENTINEL: 'unrelated-private-environment-value',
-    },
+    env,
   });
 }
 
@@ -54,7 +60,7 @@ describe('initial preview export command', () => {
   it('fetches the live digest into one self-contained file without changing fixtures or logging HTML', async () => {
     const before = await fixtureHashes();
     const output = join(await temporaryDirectory(), 'preview');
-    const { stdout, stderr } = await exportCommand(output);
+    const { stdout, stderr } = await exportCommand(output, syntheticMarker);
     expect(stdout.trim()).toBe('Initial marked preview exported and verified.');
     expect(stderr).toBe('');
     expect(await readdir(output)).toEqual(['index.html']);
@@ -70,7 +76,7 @@ describe('initial preview export command', () => {
 
   it('rejects a repository output path without writing generated HTML', async () => {
     const output = join(root, 'forbidden-preview');
-    await expect(exportCommand(output)).rejects.toMatchObject(failure);
+    await expect(exportCommand(output, syntheticMarker)).rejects.toMatchObject(failure);
     expect(existsSync(output)).toBe(false);
   });
 
@@ -82,7 +88,44 @@ describe('initial preview export command', () => {
 
   it('rejects an existing output directory so unrelated files cannot enter the artifact', async () => {
     const output = await temporaryDirectory();
-    await expect(exportCommand(output)).rejects.toMatchObject(failure);
+    await expect(exportCommand(output, syntheticMarker)).rejects.toMatchObject(failure);
     expect(await readdir(output)).toEqual([]);
+  });
+});
+
+describe('reviewed preview export command', () => {
+  it('exports the same live digest with the marker truly unset and leaves fixtures unchanged', async () => {
+    const before = await fixtureHashes();
+    const parent = await temporaryDirectory();
+    const markedOutput = join(parent, 'marked');
+    const output = join(parent, 'unmarked');
+    await exportCommand(markedOutput, syntheticMarker);
+    const markedHtml = await readFile(join(markedOutput, 'index.html'), 'utf8');
+
+    const { stdout, stderr } = await exportCommand(output, undefined, true);
+    expect(stdout.trim()).toBe('Unmarked preview exported and verified.');
+    expect(stderr).toBe('');
+    expect(await readdir(output)).toEqual(['index.html']);
+    const html = await readFile(join(output, 'index.html'), 'utf8');
+    expect(html).toContain('<span class="marker">no marker set</span>');
+    expect(html).not.toContain('synthetic-preview');
+    expect(html).not.toContain('unrelated-private');
+    expect(html).toBe(markedHtml.replace(
+      '<span class="marker">synthetic-preview&lt;&amp;&quot;&#39;marker</span>',
+      '<span class="marker">no marker set</span>',
+    ));
+    expect(await fixtureHashes()).toEqual(before);
+  });
+
+  it.each([syntheticMarker, '', ' '])('rejects a present marker (%j) before creating output', async (marker) => {
+    const output = join(await temporaryDirectory(), 'preview');
+    await expect(exportCommand(output, marker, true)).rejects.toMatchObject(failure);
+    expect(existsSync(output)).toBe(false);
+  });
+
+  it('still rejects output inside the repository', async () => {
+    const output = join(root, 'forbidden-preview');
+    await expect(exportCommand(output, undefined, true)).rejects.toMatchObject(failure);
+    expect(existsSync(output)).toBe(false);
   });
 });

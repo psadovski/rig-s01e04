@@ -42,9 +42,18 @@ async function outputOutsideGit(outputDirectory: string): Promise<string> {
   return output;
 }
 
-export async function exportPreview(outputDirectory: string): Promise<void> {
+export async function exportPreview(
+  outputDirectory: string, mode: 'marked' | 'unmarked' = 'marked',
+): Promise<void> {
   const marker = process.env.LANE_MARKER?.trim();
-  requireCheck(marker !== undefined && marker.length > 0);
+  let expectedBanner: string;
+  if (mode === 'unmarked') {
+    requireCheck(process.env.LANE_MARKER === undefined);
+    expectedBanner = 'no marker set';
+  } else {
+    requireCheck(marker !== undefined && marker.length > 0);
+    expectedBanner = escapeText(marker);
+  }
   const runsDir = join(repository, 'runs');
   for (const [fixtureNight, expected] of Object.entries(fixtureHashes)) {
     const content = await readFile(join(runsDir, `${fixtureNight}.jsonl`), 'utf8');
@@ -79,7 +88,7 @@ export async function exportPreview(outputDirectory: string): Promise<void> {
     requireCheck(response.headers.get('content-type')?.includes('text/html') === true);
     const html = await response.text();
     requireCheck(html.startsWith('<!doctype html>'));
-    requireCheck(html.includes(`<span class="marker">${escapeText(marker)}</span>`));
+    requireCheck(html.includes(`<span class="marker">${expectedBanner}</span>`));
     requireCheck(html.includes('malformed records: 1'));
     const body = html.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1];
     requireCheck(body !== undefined && (body.match(/<tr>/g) ?? []).length === 5);
@@ -104,9 +113,12 @@ export async function exportPreview(outputDirectory: string): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    requireCheck(process.argv.length === 3);
-    await exportPreview(process.argv[2]);
-    console.log('Initial marked preview exported and verified.');
+    const unmarked = process.argv.length === 4 && process.argv[3] === '--unmarked';
+    requireCheck(process.argv.length === 3 || unmarked);
+    await exportPreview(process.argv[2], unmarked ? 'unmarked' : 'marked');
+    console.log(unmarked
+      ? 'Unmarked preview exported and verified.'
+      : 'Initial marked preview exported and verified.');
   } catch {
     // Never print exception inputs, environment, response bodies, or the marker.
     console.error('Preview export failed; check the runtime marker, sample fixtures, and fresh output directory outside git.');
